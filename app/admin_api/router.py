@@ -32,7 +32,7 @@ async def admin_user_days_set(body: DaysSetReq, admin=Depends(require_admin_tg))
     return {"ok": True, "results": results}
 
 @router.post("/admin/broadcast")
-async def admin_broadcast(body: BroadcastReq, admin=Depends(require_admin_token)):
+async def admin_broadcast(body: BroadcastReq, admin=Depends(require_admin_tg)):
     import os, aiohttp
     token = os.getenv("TG_BOT_TOKEN")
     if not token:
