@@ -1,68 +1,55 @@
-import os, aiohttp
-from datetime import datetime, timezone, timedelta
-from typing import Any
+import os, aiohttp, datetime as dt
+from typing import Optional
 
-GR_BASE = os.getenv("PANEL_GR_API_BASE")
-GR_AUTH = os.getenv("PANEL_GR_AUTH")      # 'Bearer ...'
-CZ_BASE = os.getenv("PANEL_CZ_API_BASE")
-CZ_AUTH = os.getenv("PANEL_CZ_AUTH")
-TIMEOUT = int(os.getenv("PANEL_TIMEOUT", "10"))
-INSECURE = os.getenv("PANEL_INSECURE_SSL") == "1"
+# Греция
+GR_BASE = os.getenv("PANEL_GR_API_BASE") or ""     # например: http(s)://host:8000
+GR_AUTH = os.getenv("PANEL_GR_AUTH") or ""         # Bearer <jwt> (или Basic ...)
 
-def _now_s() -> int:
-    return int(datetime.now(tz=timezone.utc).timestamp())
+# Чехия
+CZ_BASE = os.getenv("PANEL_CZ_API_BASE") or ""
+CZ_AUTH = os.getenv("PANEL_CZ_AUTH") or ""
 
-def _days_from_expire(exp: Any) -> int | None:
-    if exp is None:
-        return None
-    try:
-        exp = int(exp)
-        # если пришли миллисекунды — переведём в секунды
-        if exp > 10_000_000_000:  # > ~2286 года в секундах
-            exp //= 1000
-        delta = exp - _now_s()
-        return max(0, delta // 86400)
-    except Exception:
-        return None
+def _hdr(auth: str):
+    return {"Authorization": auth} if auth else {}
 
-def _expire_from_days(days: int) -> int:
-    return _now_s() + int(days) * 86400
+async def _get_days(base: str, auth: str, tgid: int) -> Optional[int]:
+    if not base: return None
+    url = f"{base.rstrip('/')}/api/user/{tgid}"
+    async with aiohttp.ClientSession() as s:
+        async with s.get(url, headers=_hdr(auth), ssl=False) as r:
+            if r.status != 200: return None
+            j = await r.json()
+    # Marzban отдаёт expire в секундах (unix). Считаем дни.
+    exp = j.get("expire") or j.get("expiry_time") or j.get("expire_at")
+    if not exp: return None
+    # если iso-строка
+    if isinstance(exp, str):
+        try:
+            exp_dt = dt.datetime.fromisoformat(exp.replace("Z","+00:00"))
+            exp_ts = int(exp_dt.timestamp())
+        except: return None
+    else:
+        exp_ts = int(exp)
+    now = int(dt.datetime.now(dt.timezone.utc).timestamp())
+    left = max(0, (exp_ts - now) // 86400)
+    return int(left)
 
-async def _req(method: str, url: str, headers: dict | None = None, json: dict | None = None):
-    if not url:
-        return 0, {"error": "no url"}
-    timeout = aiohttp.ClientTimeout(total=TIMEOUT)
-    async with aiohttp.ClientSession(timeout=timeout) as s:
-        async with s.request(method, url, headers=headers, json=json, ssl=not INSECURE) as r:
-            ct = (r.headers.get("content-type") or "").lower()
-            data = await (r.json() if "application/json" in ct else r.text())
-            return r.status, data
+async def _set_days(base: str, auth: str, tgid: int, days: int):
+    if not base: return {"error": "no base"}
+    now = int(dt.datetime.now(dt.timezone.utc).timestamp())
+    expire = now + int(days) * 86400
+    url = f"{base.rstrip('/')}/api/user/{tgid}"
+    body = {"expire": expire}
+    async with aiohttp.ClientSession() as s:
+        async with s.put(url, json=body, headers=_hdr(auth), ssl=False) as r:
+            if r.status not in (200, 201): 
+                return {"error": f"http {r.status}"}
+            try: data = await r.json()
+            except: data = {"ok": True}
+    return data or {"ok": True}
 
-# ===== ГРЕЦИЯ (по tgid) =====
-async def get_days_gr(tgid: int) -> int | None:
-    if not GR_BASE: return None
-    st, data = await _req("GET", f"{GR_BASE}/api/user/{tgid}", {"Authorization": GR_AUTH})
-    if isinstance(data, dict):
-        # Marzban обычно отдаёт expire (unix seconds / ms)
-        return _days_from_expire(data.get("expire") or data.get("expired_at") or data.get("expires"))
-    return None
-
-async def set_days_gr(tgid: int, days: int):
-    if not GR_BASE: return None
-    payload = {"expire": _expire_from_days(days)}
-    st, data = await _req("PUT", f"{GR_BASE}/api/user/{tgid}", {"Authorization": GR_AUTH}, payload)
-    return data if isinstance(data, dict) else {"status": st, "data": data}
-
-# ===== ЧЕХИЯ (по tgid) =====
-async def get_days_cz(tgid: int) -> int | None:
-    if not CZ_BASE: return None
-    st, data = await _req("GET", f"{CZ_BASE}/api/user/{tgid}", {"Authorization": CZ_AUTH})
-    if isinstance(data, dict):
-        return _days_from_expire(data.get("expire") or data.get("expired_at") or data.get("expires"))
-    return None
-
-async def set_days_cz(tgid: int, days: int):
-    if not CZ_BASE: return None
-    payload = {"expire": _expire_from_days(days)}
-    st, data = await _req("PUT", f"{CZ_BASE}/api/user/{tgid}", {"Authorization": CZ_AUTH}, payload)
-    return data if isinstance(data, dict) else {"status": st, "data": data}
+# внешние функции под роутер
+async def get_days_gr(tgid: int) -> Optional[int]: return await _get_days(GR_BASE, GR_AUTH, tgid)
+async def set_days_gr(tgid: int, days: int):       return await _set_days(GR_BASE, GR_AUTH, tgid, days)
+async def get_days_cz(tgid: int) -> Optional[int]: return await _get_days(CZ_BASE, CZ_AUTH, tgid)
+async def set_days_cz(tgid: int, days: int):       return await _set_days(CZ_BASE, CZ_AUTH, tgid, days)
