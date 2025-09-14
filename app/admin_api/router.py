@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from .deps import require_admin_tg
 from .supa import get_days_by_tgid, set_days_by_tgid
 from .panel import get_days_gr, set_days_gr, get_days_cz, set_days_cz
-from .models import DaysInfo, SetDaysBody, BroadcastBody
+from .models import DaysInfo, DaysSetReq, BroadcastReq
 import asyncio, os, aiohttp
 
 router = APIRouter()
@@ -15,7 +15,7 @@ async def admin_user_days(tgid: int, admin=Depends(require_admin_tg)):
     return {"tgid": tgid, "supabase_days": supa, "gr_days": gr, "cz_days": cz}
 
 @router.post("/admin/user/days/set")
-async def admin_user_days_set(body: SetDaysBody, admin=Depends(require_admin_tg)):
+async def admin_user_days_set(body: DaysSetReq, admin=Depends(require_admin_tg)):
     results = {}
     if body.supabase_days is not None:
         await set_days_by_tgid(body.tgid, body.supabase_days)
@@ -32,7 +32,7 @@ async def admin_user_days_set(body: SetDaysBody, admin=Depends(require_admin_tg)
     return {"ok": True, "results": results}
 
 @router.post("/admin/broadcast")
-async def broadcast(body: BroadcastBody, admin=Depends(require_admin_tg)):
+async def broadcast(body: BroadcastReq, admin=Depends(require_admin_tg)):
     # шлём через официальный телеграм-апи
     import os, json
     token = os.getenv("TG_BOT_TOKEN")
