@@ -2,12 +2,12 @@ from fastapi import APIRouter, Depends
 from .deps import require_admin_tg
 from .supa import get_days_by_tgid, set_days_by_tgid
 from .panel import get_days_gr, set_days_gr, get_days_cz, set_days_cz
-from .models import DaysResp, SetDaysBody, BroadcastBody
+from .models import DaysInfo, SetDaysBody, BroadcastBody
 import asyncio, os, aiohttp
 
 router = APIRouter()
 
-@router.get("/admin/user/{tgid}/days", response_model=DaysResp)
+@router.get("/admin/user/{tgid}/days", response_model=DaysInfo)
 async def admin_user_days(tgid: int, admin=Depends(require_admin_tg)):
     supa = await get_days_by_tgid(tgid)
     gr = await get_days_gr(tgid) if os.getenv("PANEL_GR_API_BASE") else None
