@@ -1,26 +1,22 @@
+# app/admin_api/models.py
+from pydantic import BaseModel
 
-from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
-
-class PanelDays(BaseModel):
-    days: Optional[int] = None
-    raw: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
-
-class DaysInfo(BaseModel):
+# Ответ для /admin/user/{tgid}/days
+class DaysResp(BaseModel):
     tgid: int
-    supabase_days: Optional[int] = None
-    supabase_raw: Optional[dict] = None
-    gr: Optional[PanelDays] = None
-    cz: Optional[PanelDays] = None
+    supabase_days: int | None = None
+    gr_days: int | None = None
+    cz_days: int | None = None
 
-class DaysSetReq(BaseModel):
+# Тело запроса для /admin/user/days/set
+class SetDaysBody(BaseModel):
     tgid: int
-    days: int = Field(ge=0)
-    sync_supabase: bool = True
-    sync_gr: bool = False
-    sync_cz: bool = False
+    supabase_days: int | None = None   # поставить дни в Supabase (если указан)
+    gr_days: int | None = None         # поставить дни в панели Греции (если указан)
+    cz_days: int | None = None         # поставить дни в панели Чехии (если указан)
 
-class BroadcastReq(BaseModel):
-    text: str
-    tgid_list: Optional[list[int]] = None
+# Тело запроса для /admin/broadcast
+class BroadcastBody(BaseModel):
+    message: str
+    tgid_list: list[int] | None = None   # если None — отправка всем
+    protect: bool | None = False         # без предпросмотра/защиты (оставим флаг на будущее)

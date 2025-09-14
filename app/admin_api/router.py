@@ -1,60 +1,35 @@
-
-from fastapi import APIRouter, Depends, HTTPException
-import requests
-from typing import Optional
+from fastapi import APIRouter, Depends
 from .deps import require_admin_tg
-from .models import DaysInfo, DaysSetReq, BroadcastReq, PanelDays
-from .supa import get_days_from_supabase, set_days_in_supabase, list_all_tgids
+from .supa import get_days_by_tgid, set_days_by_tgid
 from .panel import get_days_gr, set_days_gr, get_days_cz, set_days_cz
-from .config import TG_BOT_TOKEN, TG_BOT_API
+from .models import DaysResp, SetDaysBody, BroadcastBody
+import asyncio, os
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter()
 
-@router.get("/user/{tgid}/days", response_model=DaysInfo)
-def get_days(tgid: int, _: dict = Depends(require_admin_tg)):
-    s_days, s_raw = get_days_from_supabase(tgid)
-    gr = get_days_gr(tgid)
-    cz = get_days_cz(tgid)
-    return DaysInfo(
-        tgid=tgid,
-        supabase_days=s_days,
-        supabase_raw=s_raw,
-        gr=PanelDays(**gr),
-        cz=PanelDays(**cz),
-    )
+@router.get("/admin/user/{tgid}/days", response_model=DaysResp)
+async def admin_user_days(tgid: int, admin=Depends(require_admin_tg)):
+    supa = await get_days_by_tgid(tgid)
+    gr = await get_days_gr(tgid) if (os.getenv("PANEL_GR_API_BASE") or os.getenv("PANEL_GR_GET_URL")) else None
+    cz = await get_days_cz(tgid) if (os.getenv("PANEL_CZ_API_BASE") or os.getenv("PANEL_CZ_GET_URL")) else None
+    return {"tgid": tgid, "supabase_days": supa, "gr_days": gr, "cz_days": cz}
 
-@router.post("/user/days/set")
-def set_days(req: DaysSetReq, _: dict = Depends(require_admin_tg)):
-    result = {"supabase": None, "gr": None, "cz": None}
-    if req.sync_supabase:
-        result["supabase"] = set_days_in_supabase(req.tgid, req.days)
-        if result["supabase"] is None:
-            raise HTTPException(500, "Failed to update Supabase")
-    if req.sync_gr:
-        result["gr"] = set_days_gr(str(req.tgid), req.days)
-    if req.sync_cz:
-        result["cz"] = set_days_cz(str(req.tgid), req.days)
-    return {"ok": True, "result": result}
+@router.post("/admin/user/days/set")
+async def admin_user_days_set(body: SetDaysBody, admin=Depends(require_admin_tg)):
+    results = {}
+    if body.supabase_days is not None:
+        await set_days_by_tgid(body.tgid, body.supabase_days)
+        results["supabase"] = {"ok": True, "days": body.supabase_days}
 
-def _send_bot_message(chat_id: int, text: str) -> Optional[dict]:
-    if not TG_BOT_TOKEN:
-        return None
-    url = f"{TG_BOT_API}/bot{TG_BOT_TOKEN}/sendMessage"
-    r = requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=30)
-    try:
-        return r.json()
-    except Exception:
-        return {"status_code": r.status_code, "text": r.text}
+    tasks, labels = [], []
+    if body.gr_days is not None:
+        tasks.append(set_days_gr(body.tgid, body.gr_days)); labels.append("gr")
+    if body.cz_days is not None:
+        tasks.append(set_days_cz(body.tgid, body.cz_days)); labels.append("cz")
 
-@router.post("/broadcast")
-def broadcast(body: BroadcastReq, _: dict = Depends(require_admin_tg)):
-    targets = body.tgid_list or list_all_tgids(limit=100000)
-    sent = 0
-    fails = 0
-    for t in targets:
-        res = _send_bot_message(t, body.text)
-        if res and res.get("ok"):
-            sent += 1
-        else:
-            fails += 1
-    return {"ok": True, "sent": sent, "failed": fails, "total": len(targets)}
+    if tasks:
+        outs = await asyncio.gather(*tasks, return_exceptions=True)
+        for lbl, r in zip(labels, outs):
+            results[lbl] = (r if isinstance(r, dict) else {"error": str(r)}) or {"ok": True}
+
+    return {"ok": True, "results": results}
