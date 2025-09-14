@@ -1,30 +1,30 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List, Any, Dict
-import re
+from typing import Optional, Dict, Any, List
+
+class PanelDays(BaseModel):
+    days: Optional[int] = None
+    raw: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+class DaysInfo(BaseModel):
+    tgid: int
+    supabase_days: Optional[int] = None
+    supabase_raw: Optional[Dict[str, Any]] = None
+    gr: Optional[PanelDays] = None
+    cz: Optional[PanelDays] = None
+
+class DaysSetReq(BaseModel):
+    tgid: int
+    days: int = Field(ge=0)
+    sync_supabase: bool = True
+    sync_gr: bool = False
+    sync_cz: bool = False
 
 class BroadcastReq(BaseModel):
-    text: str = Field(min_length=1)
+    text: str
     tgid_list: Optional[List[int]] = None
 
-    # совместимость: принимаем "message", строковые списки и пр.
-    @classmethod
-    def model_validate(cls, obj: Any, *args, **kwargs):  # pydantic v2
-        if isinstance(obj, dict):
-            data: Dict[str, Any] = dict(obj)
-            if "text" not in data and "message" in data:
-                data["text"] = data.pop("message")
-
-            if "tgid_list" in data and isinstance(data["tgid_list"], str):
-                parts = re.split(r"[, \n\r\t]+", data["tgid_list"])
-                data["tgid_list"] = [int(x) for x in parts if x.isdigit()]
-
-            if "tgids" in data and "tgid_list" not in data:
-                v = data["tgids"]
-                if isinstance(v, str):
-                    parts = re.split(r"[, \n\r\t]+", v)
-                    data["tgid_list"] = [int(x) for x in parts if x.isdigit()]
-                elif isinstance(v, list):
-                    data["tgid_list"] = [int(x) for x in v if str(x).isdigit()]
-
-            obj = data
-        return super().model_validate(obj, *args, **kwargs)
+# --- алиасы для совместимости со старым роутером ---
+DaysResp      = DaysInfo
+SetDaysBody   = DaysSetReq
+BroadcastBody = BroadcastReq
