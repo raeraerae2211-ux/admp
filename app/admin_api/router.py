@@ -32,28 +32,40 @@ async def admin_user_days_set(body: DaysSetReq, admin=Depends(require_admin_tg))
     return {"ok": True, "results": results}
 
 @router.post("/admin/broadcast")
-async def broadcast(body: BroadcastReq, admin=Depends(require_admin_tg)):
-    # шлём через официальный телеграм-апи
-    import os, json
+async def admin_broadcast(body: BroadcastReq, admin=Depends(require_admin_token)):
+    import os, aiohttp
     token = os.getenv("TG_BOT_TOKEN")
     if not token:
         return {"error": "no bot token"}
+
     chat_ids = body.tgid_list
-    # если не передан список — бери всех из Supabase
     if not chat_ids:
-        # вытянем все tgids
+        # берём всех из Supabase
         from .supa import _client, TABLE, TG_COL
         cli = _client()
         if not cli:
             return {"error": "no supabase client"}
-        data = cli.table(TABLE).select(TG_COL).execute().data or []
-        chat_ids = [int(x[TG_COL]) for x in data if x.get(TG_COL)]
-    sent = 0; errors = []
+        rows = cli.table(TABLE).select(TG_COL).execute().data or []
+        chat_ids = [int(r[TG_COL]) for r in rows if r.get(TG_COL)]
+
+    sent, errors = 0, []
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+
     async with aiohttp.ClientSession() as s:
         for cid in chat_ids:
-            url = f"https://api.telegram.org/bot{token}/sendMessage"
-            payload = {"chat_id": cid, "text": body.message, "disable_web_page_preview": not body.protect}
-            async with s.post(url, json=payload) as r:
-                if r.status == 200: sent += 1
-                else: errors.append({"tgid": cid, "status": r.status})
+            payload = {
+                "chat_id": cid,
+                "text": body.text,                 # <-- ВАЖНО: body.text
+                "disable_web_page_preview": True,
+                "protect_content": False,
+            }
+            try:
+                async with s.post(url, json=payload) as r:
+                    if r.status == 200:
+                        sent += 1
+                    else:
+                        errors.append({"tgid": cid, "status": r.status, "body": await r.text()})
+            except Exception as e:
+                errors.append({"tgid": cid, "error": str(e)})
+
     return {"ok": True, "sent": sent, "errors": errors}

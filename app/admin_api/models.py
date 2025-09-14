@@ -23,6 +23,7 @@ class DaysSetReq(BaseModel):
 class BroadcastReq(BaseModel):
     text: str
     tgid_list: Optional[List[int]] = None
+    protect: bool = False
 
 # --- алиасы для совместимости со старым роутером ---
 DaysResp      = DaysInfo
