@@ -1,69 +1,68 @@
+import os, aiohttp
+from datetime import datetime, timezone, timedelta
+from typing import Any
 
-from typing import Optional, Dict, Any
-import time, requests
-from .config import PANEL_GR_URL, PANEL_GR_TOKEN, PANEL_CZ_URL, PANEL_CZ_TOKEN, PANEL_VERIFY_SSL
+GR_BASE = os.getenv("PANEL_GR_API_BASE")
+GR_AUTH = os.getenv("PANEL_GR_AUTH")      # 'Bearer ...'
+CZ_BASE = os.getenv("PANEL_CZ_API_BASE")
+CZ_AUTH = os.getenv("PANEL_CZ_AUTH")
+TIMEOUT = int(os.getenv("PANEL_TIMEOUT", "10"))
+INSECURE = os.getenv("PANEL_INSECURE_SSL") == "1"
 
-def _auth_headers(token: str) -> dict:
-    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+def _now_s() -> int:
+    return int(datetime.now(tz=timezone.utc).timestamp())
 
-def _get_panel(base: str, token: str, username: str) -> Optional[Dict[str, Any]]:
-    if not base or not token:
-        return None
-    try:
-        r = requests.get(f"{base}/user/{username}", headers=_auth_headers(token), timeout=30, verify=PANEL_VERIFY_SSL)
-        if r.status_code != 200:
-            return {"error": f"HTTP {r.status_code}", "raw": r.text}
-        return r.json()
-    except Exception as e:
-        return {"error": str(e)}
-
-def _set_panel_days(base: str, token: str, username: str, days: int) -> Optional[Dict[str, Any]]:
-    if not base or not token:
-        return None
-    try:
-        import json as _json
-        payload = {"days": days}
-        r = requests.put(f"{base}/user/{username}", headers=_auth_headers(token), data=_json.dumps(payload), timeout=30, verify=PANEL_VERIFY_SSL)
-        if r.status_code not in (200, 204):
-            return {"error": f"HTTP {r.status_code}", "raw": r.text}
-        return {"ok": True}
-    except Exception as e:
-        return {"error": str(e)}
-
-def _to_days_from_panel(obj: Dict[str, Any]) -> Optional[int]:
-    if not obj or "error" in obj:
-        return None
-    exp = obj.get("expire") or obj.get("expires_at") or obj.get("expiry")
+def _days_from_expire(exp: Any) -> int | None:
     if exp is None:
-        d = obj.get("days")
-        return int(d) if isinstance(d, int) else None
+        return None
     try:
-        now = int(time.time())
-        if isinstance(exp, (int, float)): sec = int(exp)
-        elif isinstance(exp, str):
-            if exp.isdigit(): sec = int(exp)
-            else:
-                import datetime
-                dt = datetime.datetime.fromisoformat(exp.replace("Z","+00:00"))
-                sec = int(dt.timestamp())
-        else: return None
-        if sec <= now: return 0
-        return (sec - now)//86400
+        exp = int(exp)
+        # если пришли миллисекунды — переведём в секунды
+        if exp > 10_000_000_000:  # > ~2286 года в секундах
+            exp //= 1000
+        delta = exp - _now_s()
+        return max(0, delta // 86400)
     except Exception:
         return None
 
-def gr_get(username: str) -> Dict[str, Any]:
-    data = _get_panel(PANEL_GR_URL, PANEL_GR_TOKEN, username)
-    return {"days": _to_days_from_panel(data), "raw": data, "error": data.get("error") if isinstance(data, dict) else None} if isinstance(data, dict) else {"days": None, "raw": data}
+def _expire_from_days(days: int) -> int:
+    return _now_s() + int(days) * 86400
 
-def gr_set(username: str, days: int) -> Dict[str, Any]:
-    res = _set_panel_days(PANEL_GR_URL, PANEL_GR_TOKEN, username, days)
-    return res or {"error": "panel not configured"}
+async def _req(method: str, url: str, headers: dict | None = None, json: dict | None = None):
+    if not url:
+        return 0, {"error": "no url"}
+    timeout = aiohttp.ClientTimeout(total=TIMEOUT)
+    async with aiohttp.ClientSession(timeout=timeout) as s:
+        async with s.request(method, url, headers=headers, json=json, ssl=not INSECURE) as r:
+            ct = (r.headers.get("content-type") or "").lower()
+            data = await (r.json() if "application/json" in ct else r.text())
+            return r.status, data
 
-def cz_get(username: str) -> Dict[str, Any]:
-    data = _get_panel(PANEL_CZ_URL, PANEL_CZ_TOKEN, username)
-    return {"days": _to_days_from_panel(data), "raw": data, "error": data.get("error") if isinstance(data, dict) else None} if isinstance(data, dict) else {"days": None, "raw": data}
+# ===== ГРЕЦИЯ (по tgid) =====
+async def get_days_gr(tgid: int) -> int | None:
+    if not GR_BASE: return None
+    st, data = await _req("GET", f"{GR_BASE}/api/user/{tgid}", {"Authorization": GR_AUTH})
+    if isinstance(data, dict):
+        # Marzban обычно отдаёт expire (unix seconds / ms)
+        return _days_from_expire(data.get("expire") or data.get("expired_at") or data.get("expires"))
+    return None
 
-def cz_set(username: str, days: int) -> Dict[str, Any]:
-    res = _set_panel_days(PANEL_CZ_URL, PANEL_CZ_TOKEN, username, days)
-    return res or {"error": "panel not configured"}
+async def set_days_gr(tgid: int, days: int):
+    if not GR_BASE: return None
+    payload = {"expire": _expire_from_days(days)}
+    st, data = await _req("PUT", f"{GR_BASE}/api/user/{tgid}", {"Authorization": GR_AUTH}, payload)
+    return data if isinstance(data, dict) else {"status": st, "data": data}
+
+# ===== ЧЕХИЯ (по tgid) =====
+async def get_days_cz(tgid: int) -> int | None:
+    if not CZ_BASE: return None
+    st, data = await _req("GET", f"{CZ_BASE}/api/user/{tgid}", {"Authorization": CZ_AUTH})
+    if isinstance(data, dict):
+        return _days_from_expire(data.get("expire") or data.get("expired_at") or data.get("expires"))
+    return None
+
+async def set_days_cz(tgid: int, days: int):
+    if not CZ_BASE: return None
+    payload = {"expire": _expire_from_days(days)}
+    st, data = await _req("PUT", f"{CZ_BASE}/api/user/{tgid}", {"Authorization": CZ_AUTH}, payload)
+    return data if isinstance(data, dict) else {"status": st, "data": data}
