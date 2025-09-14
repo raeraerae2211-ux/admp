@@ -5,7 +5,7 @@ from typing import Optional
 from .deps import require_admin_tg
 from .models import DaysInfo, DaysSetReq, BroadcastReq, PanelDays
 from .supa import get_days_from_supabase, set_days_in_supabase, list_all_tgids
-from .panel import gr_get, gr_set, cz_get, cz_set
+from .panel import get_days_gr, set_days_gr, get_days_cz, set_days_cz
 from .config import TG_BOT_TOKEN, TG_BOT_API
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -13,8 +13,8 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 @router.get("/user/{tgid}/days", response_model=DaysInfo)
 def get_days(tgid: int, _: dict = Depends(require_admin_tg)):
     s_days, s_raw = get_days_from_supabase(tgid)
-    gr = gr_get(str(tgid))
-    cz = cz_get(str(tgid))
+    gr = get_days_gr(tgid)
+    cz = get_days_cz(tgid)
     return DaysInfo(
         tgid=tgid,
         supabase_days=s_days,
@@ -31,9 +31,9 @@ def set_days(req: DaysSetReq, _: dict = Depends(require_admin_tg)):
         if result["supabase"] is None:
             raise HTTPException(500, "Failed to update Supabase")
     if req.sync_gr:
-        result["gr"] = gr_set(str(req.tgid), req.days)
+        result["gr"] = set_days_gr(str(req.tgid), req.days)
     if req.sync_cz:
-        result["cz"] = cz_set(str(req.tgid), req.days)
+        result["cz"] = set_days_cz(str(req.tgid), req.days)
     return {"ok": True, "result": result}
 
 def _send_bot_message(chat_id: int, text: str) -> Optional[dict]:
