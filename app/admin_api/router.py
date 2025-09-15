@@ -10,8 +10,8 @@ router = APIRouter()
 @router.get("/admin/user/{tgid}/days", response_model=DaysInfo)
 async def admin_user_days(tgid: int, admin=Depends(require_admin_tg)):
     supa = await get_days_by_tgid(tgid)
-    gr = await get_days_gr(tgid) if os.getenv("PANEL_GR_API_BASE") else None
-    cz = await get_days_cz(tgid) if os.getenv("PANEL_CZ_API_BASE") else None
+    gr = await get_days_gr(tgid)
+    cz = await get_days_cz(tgid)
     return {"tgid": tgid, "supabase_days": supa, "gr_days": gr, "cz_days": cz}
 
 @router.post("/admin/user/days/set")
