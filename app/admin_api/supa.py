@@ -1,5 +1,5 @@
 import os
-from typing import Optional, Any
+from typing import Optional, Any, Dict
 from supabase import create_client, Client
 import anyio
 
@@ -35,13 +35,20 @@ async def get_days_by_tgid(tgid: int) -> Optional[int]:
 
     return await anyio.to_thread.run_sync(_q)
 
-async def set_days_by_tgid(tgid: int, days: int) -> dict[str, Any]:
+async def set_days_by_tgid(tgid: int, days: int) -> Dict[str, Any]:
     cli = _client()
     if not cli:
         return {"error": "no supabase client"}
 
-    def _upsert() -> dict[str, Any]:
-        r = cli.table(TABLE).upsert({TG_COL: tgid, DAYS_COL: int(days)}, on_conflict=TG_COL).execute()
-        return {"ok": True, "rows": getattr(r, "data", None)}
+    try:
+        days = int(days)
+        # UPDATE ... WHERE tgid = :tgid
+        resp = cli.table(TABLE).update({DAYS_COL: days}).eq(TG_COL, tgid).execute()
+        updated = len(resp.data or [])
 
-    return await anyio.to_thread.run_sync(_upsert)
+        if updated == 0:
+            return {"error": f"tgid {tgid} not found", "updated": 0}
+
+        return {"ok": True, "updated": updated, "days": days, "row": (resp.data or [None])[0]}
+    except Exception as e:
+        return {"error": str(e)}
