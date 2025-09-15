@@ -44,13 +44,15 @@ async def admin_user_days_set(body: DaysSetReq, admin=Depends(require_admin_tg))
 
 @router.post("/admin/broadcast")
 async def admin_broadcast(body: BroadcastReq, admin=Depends(require_admin_tg)):
+    import os, aiohttp
     token = os.getenv("TG_BOT_TOKEN")
     if not token:
         return {"error": "no bot token"}
 
+    # список получателей
     chat_ids = body.tgid_list
     if not chat_ids:
-        # берём всех из Supabase
+        # взять всех из Supabase
         from .supa import _client, TABLE, TG_COL
         cli = _client()
         if not cli:
@@ -58,23 +60,40 @@ async def admin_broadcast(body: BroadcastReq, admin=Depends(require_admin_tg)):
         rows = cli.table(TABLE).select(TG_COL).execute().data or []
         chat_ids = [int(r[TG_COL]) for r in rows if r.get(TG_COL)]
 
-    sent, errors = 0, []
+    # собрать reply_markup при необходимости
+    reply_markup = None
+    if body.button:
+        btn = {"text": body.button.text}
+        if body.button.type == "url":
+            btn["url"] = body.button.value
+        else:
+            btn["callback_data"] = body.button.value
+        reply_markup = {"inline_keyboard": [[btn]]}
+
     url = f"https://api.telegram.org/bot{token}/sendMessage"
+    sent, errors = 0, []
 
     async with aiohttp.ClientSession() as s:
         for cid in chat_ids:
             payload = {
                 "chat_id": cid,
                 "text": body.text,
-                "disable_web_page_preview": True,
-                "protect_content": False,
+                # эти поля не отправляем, если None — Телеграм капризничает
+                **({"parse_mode": body.parse_mode} if body.parse_mode else {}),
+                "disable_web_page_preview": body.disable_web_page_preview,
+                "protect_content": body.protect,
+                **({"reply_markup": reply_markup} if reply_markup else {}),
             }
             try:
                 async with s.post(url, json=payload) as r:
                     if r.status == 200:
                         sent += 1
                     else:
-                        errors.append({"tgid": cid, "status": r.status, "body": await r.text()})
+                        errors.append({
+                            "tgid": cid,
+                            "status": r.status,
+                            "body": await r.text()
+                        })
             except Exception as e:
                 errors.append({"tgid": cid, "error": str(e)})
 

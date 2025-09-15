@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Literal
 
 class PanelDays(BaseModel):
     days: Optional[int] = None
@@ -23,6 +23,20 @@ class DaysSetReq(BaseModel):
 class BroadcastReq(BaseModel):
     text: str
     tgid_list: Optional[List[int]] = None
+    protect: bool = False
+
+# --- НОВОЕ: описание кнопки и расширенная рассылка ---
+class Button(BaseModel):
+    text: str
+    type: Literal["url", "callback"]
+    value: str  # url или callback_data
+
+class BroadcastReq(BaseModel):
+    text: str
+    tgid_list: Optional[List[int]] = None
+    parse_mode: Optional[Literal["HTML","Markdown","MarkdownV2"]] = None
+    button: Optional[Button] = None
+    disable_web_page_preview: bool = True
     protect: bool = False
 
 # --- алиасы для совместимости со старым роутером ---
