@@ -10,9 +10,10 @@ router = APIRouter()
 @router.get("/admin/user/{tgid}/days", response_model=DaysInfo)
 async def admin_user_days(tgid: int, admin=Depends(require_admin_tg)):
     supa = await get_days_by_tgid(tgid)
-    gr = await get_gr_by_tgid(tgid)
-    cz = await get_cz_by_tgid(tgid)
-    return {"tgid": tgid, "supabase_days": supa, "gr_days": gr, "cz_days": cz}
+    gr = await get_gr_by_tgid(tgid)   # всегда возвращает PanelDays (с error при проблеме)
+    cz = await get_cz_by_tgid(tgid)   # всегда возвращает PanelDays (с error при проблеме)
+    # ВАЖНО: возвращаем ключи gr / cz, иначе Pydantic выкинет поля
+    return {"tgid": tgid, "supabase_days": supa, "gr": gr, "cz": cz}
 
 @router.post("/admin/user/days/set")
 async def admin_user_days_set(body: DaysSetReq, admin=Depends(require_admin_tg)):
@@ -36,14 +37,13 @@ async def admin_user_days_set(body: DaysSetReq, admin=Depends(require_admin_tg))
             if isinstance(r, Exception):
                 results[lbl] = {"error": str(r)}
             else:
-                # r — это PanelDays (pydantic BaseModel). FastAPI сам сериализует.
+                # r — это PanelDays; FastAPI сам сериализует в {days, raw, error}
                 results[lbl] = r
 
     return {"ok": True, "results": results}
 
 @router.post("/admin/broadcast")
 async def admin_broadcast(body: BroadcastReq, admin=Depends(require_admin_tg)):
-    import os, aiohttp
     token = os.getenv("TG_BOT_TOKEN")
     if not token:
         return {"error": "no bot token"}
@@ -65,7 +65,7 @@ async def admin_broadcast(body: BroadcastReq, admin=Depends(require_admin_tg)):
         for cid in chat_ids:
             payload = {
                 "chat_id": cid,
-                "text": body.text,                 # <-- ВАЖНО: body.text
+                "text": body.text,
                 "disable_web_page_preview": True,
                 "protect_content": False,
             }
