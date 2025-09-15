@@ -1,5 +1,5 @@
 import os, time, aiohttp
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 from .models import PanelDays
 
 def _auth_header(raw: str) -> str:
@@ -18,40 +18,41 @@ def _days_left(expire: Optional[int]) -> Optional[int]:
     left = int(expire) - int(time.time())
     return max(0, (left + 86399) // 86400)
 
-async def _fetch_user(base: str, auth: str, tgid: int) -> PanelDays:
-    base = (base or "").rstrip("/")
+async def _fetch_user(base: str | None, auth: str | None, tgid: int) -> PanelDays:
+    # 1) Нет конфигурации → не None, а объект с error
     if not base or not auth:
-        return PanelDays(error="not configured")
+        return PanelDays(error="not configured (missing PANEL_*_API_BASE or PANEL_*_AUTH)")
 
-    headers = {"Authorization": _auth_header(auth)}
-    connector = aiohttp.TCPConnector(ssl=_ssl_flag())
-    async with aiohttp.ClientSession(connector=connector) as s:
-        r = await s.get(f"{base}/api/user/{tgid}", headers=headers)
-        if r.status != 200:
-            return PanelDays(error=f"GET {r.status}: {await r.text()}")
-        raw: Dict = await r.json()
-        return PanelDays(days=_days_left(raw.get("expire")), raw=raw)
-
-# --- уже были ---
-async def get_gr_by_tgid(tgid: int) -> PanelDays:
     try:
-        return await _fetch_user(
-            os.getenv("PANEL_GR_API_BASE", ""),
-            os.getenv("PANEL_GR_AUTH", ""),
-            tgid,
-        )
+        verify_ssl = os.getenv("PANEL_VERIFY_SSL", "true").lower() != "false"
+        headers = {"Authorization": auth}
+        url = f"{base}/api/user/{tgid}"
+
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, headers=headers, ssl=verify_ssl) as r:
+                raw = await r.json(content_type=None)
+                if r.status != 200:
+                    return PanelDays(error=f"{r.status}: {raw}")
+                # TODO: посчитай days из raw, если нужно
+                days = raw.get("days") if isinstance(raw, dict) else None
+                return PanelDays(days=days, raw=raw)
+
     except Exception as e:
         return PanelDays(error=str(e))
+
+async def get_gr_by_tgid(tgid: int) -> PanelDays:
+    return await _fetch_user(
+        os.getenv("PANEL_GR_API_BASE"),
+        os.getenv("PANEL_GR_AUTH"),
+        tgid,
+    )
 
 async def get_cz_by_tgid(tgid: int) -> PanelDays:
-    try:
-        return await _fetch_user(
-            os.getenv("PANEL_CZ_API_BASE", ""),
-            os.getenv("PANEL_CZ_AUTH", ""),
-            tgid,
-        )
-    except Exception as e:
-        return PanelDays(error=str(e))
+    return await _fetch_user(
+        os.getenv("PANEL_CZ_API_BASE"),
+        os.getenv("PANEL_CZ_AUTH"),
+        tgid,
+    )
 
 # --- НОВОЕ: SET для панелей ---
 async def _set_user_days(base: str, auth: str, tgid: int, days: int) -> PanelDays:
